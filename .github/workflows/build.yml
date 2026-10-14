@@ -1,0 +1,64 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PT_URL: https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip
+  PT_SHA256: 45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python tests/test_unit.py
+
+      - name: Download platform-tools (pinned + SHA-256)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:PT_URL -OutFile pt.zip
+          $h = (Get-FileHash pt.zip -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $env:PT_SHA256) { throw "SHA-256 invalide : $h" }
+          Expand-Archive pt.zip -DestinationPath pt -Force
+          New-Item -ItemType Directory -Force platform-tools | Out-Null
+          foreach ($f in "adb.exe","AdbWinApi.dll","AdbWinUsbApi.dll") {
+            Copy-Item "pt\platform-tools\$f" "platform-tools\$f"
+          }
+
+      - name: Build .exe with PyInstaller
+        run: >
+          pyinstaller --onefile --windowed
+          --name RecuperateurAndroid
+          --add-data "platform-tools/adb.exe;platform-tools"
+          --add-data "platform-tools/AdbWinApi.dll;platform-tools"
+          --add-data "platform-tools/AdbWinUsbApi.dll;platform-tools"
+          recup_gui.py
+
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\RecuperateurAndroid.exe")) { throw "exe manquant" }
+
+      - name: Upload RecuperateurAndroid.exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: RecuperateurAndroid
+          path: dist/RecuperateurAndroid.exe
+          if-no-files-found: error
